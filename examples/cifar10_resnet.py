@@ -82,6 +82,8 @@ if version == 1:
     depth = n * 6 + 2
 elif version == 2:
     depth = n * 9 + 2
+else:
+    depth = 0
 
 # Model name, depth and version
 model_type = 'ResNet%dv%d' % (depth, version)
