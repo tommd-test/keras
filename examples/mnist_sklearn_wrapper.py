@@ -12,7 +12,7 @@ from keras.layers import Dense, Dropout, Activation, Flatten
 from keras.layers import Conv2D, MaxPooling2D
 from keras.wrappers.scikit_learn import KerasClassifier
 from keras import backend as K
-from sklearn.grid_search import GridSearchCV
+from sklearn.model_selection import GridSearchCV
 
 
 num_classes = 10
@@ -65,7 +65,7 @@ def make_model(dense_layer_sizes, filters, kernel_size, pool_size):
     model.add(Flatten())
     for layer_size in dense_layer_sizes:
         model.add(Dense(layer_size))
-    model.add(Activation('relu'))
+        model.add(Activation('relu'))
     model.add(Dropout(0.5))
     model.add(Dense(num_classes))
     model.add(Activation('softmax'))
@@ -73,8 +73,8 @@ def make_model(dense_layer_sizes, filters, kernel_size, pool_size):
     model.compile(loss='categorical_crossentropy',
                   optimizer='adadelta',
                   metrics=['accuracy'])
-
     return model
+
 
 dense_size_candidates = [[32], [64], [32, 32], [64, 64]]
 my_classifier = KerasClassifier(make_model, batch_size=32)

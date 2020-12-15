@@ -5,6 +5,8 @@ from numpy.testing import assert_allclose
 from keras import backend as K
 from keras import activations
 
+from keras.layers.core import Dense
+
 
 def get_standard_values():
     """A set of floats used for testing the activations.
@@ -15,7 +17,7 @@ def get_standard_values():
 def test_serialization():
     all_activations = ['softmax', 'relu', 'elu', 'tanh',
                        'sigmoid', 'hard_sigmoid', 'linear',
-                       'softplus', 'softsign']
+                       'softplus', 'softsign', 'selu']
     for name in all_activations:
         fn = activations.get(name)
         ref_fn = getattr(activations, name)
@@ -25,7 +27,31 @@ def test_serialization():
         assert fn == ref_fn
 
 
-def test_softmax():
+def test_get_fn():
+    """Activations has a convenience "get" function. All paths of this
+    function are tested here, although the behaviour in some instances
+    seems potentially surprising (e.g. situation 3)
+    """
+
+    # 1. Default returns linear
+    a = activations.get(None)
+    assert a == activations.linear
+
+    # # 2. Passing in a layer raises a warning
+    # layer = Dense(32)
+    # with pytest.warns(UserWarning):
+    #     a = activations.get(layer)
+
+    # 3. Callables return themselves
+    a = activations.get(lambda x: 5)
+    assert a(None) == 5
+
+    # 4. Anything else is not a valid argument
+    with pytest.raises(TypeError):
+        a = activations.get(6)
+
+
+def test_softmax_valid():
     """Test using a reference implementation of softmax.
     """
     def softmax(values):
@@ -39,6 +65,34 @@ def test_softmax():
 
     result = f([test_values])[0]
     expected = softmax(test_values)
+    assert_allclose(result, expected, rtol=1e-05)
+
+
+def test_softmax_invalid():
+    """Test for the expected exception behaviour on invalid input
+    """
+
+    x = K.placeholder(ndim=1)
+
+    # One dimensional arrays are supposed to raise a value error
+    with pytest.raises(ValueError):
+        f = K.function([x], [activations.softmax(x)])
+
+
+def test_softmax_3d():
+    """Test using a reference implementation of softmax.
+    """
+    def softmax(values, axis):
+        m = np.max(values, axis=axis, keepdims=True)
+        e = np.exp(values - m)
+        return e / np.sum(e, axis=axis, keepdims=True)
+
+    x = K.placeholder(ndim=3)
+    f = K.function([x], [activations.softmax(x, axis=1)])
+    test_values = get_standard_values()[:, :, np.newaxis].copy()
+
+    result = f([test_values])[0]
+    expected = softmax(test_values, axis=1)
     assert_allclose(result, expected, rtol=1e-05)
 
 
@@ -126,6 +180,18 @@ def test_relu():
     result = f([test_values])[0]
     assert_allclose(result, test_values, rtol=1e-05)
 
+    # Test max_value
+    test_values = np.array([[0.5, 1.5]], dtype=K.floatx())
+    f = K.function([x], [activations.relu(x, max_value=1.)])
+    result = f([test_values])[0]
+    assert np.max(result) <= 1.
+
+    # Test max_value == 6.
+    test_values = np.array([[0.5, 6.]], dtype=K.floatx())
+    f = K.function([x], [activations.relu(x, max_value=1.)])
+    result = f([test_values])[0]
+    assert np.max(result) <= 6.
+
 
 def test_elu():
     x = K.placeholder(ndim=2)
@@ -138,6 +204,24 @@ def test_elu():
     negative_values = np.array([[-1, -2]], dtype=K.floatx())
     result = f([negative_values])[0]
     true_result = (np.exp(negative_values) - 1) / 2
+
+    assert_allclose(result, true_result)
+
+
+def test_selu():
+    x = K.placeholder(ndim=2)
+    f = K.function([x], [activations.selu(x)])
+    alpha = 1.6732632423543772848170429916717
+    scale = 1.0507009873554804934193349852946
+
+    positive_values = get_standard_values()
+    result = f([positive_values])[0]
+    assert_allclose(result, positive_values * scale, rtol=1e-05)
+
+    negative_values = np.array([[-1, -2]], dtype=K.floatx())
+
+    result = f([negative_values])[0]
+    true_result = (np.exp(negative_values) - 1) * scale * alpha
 
     assert_allclose(result, true_result)
 

@@ -1,320 +1,199 @@
 """Python utilities required by Keras."""
-from __future__ import absolute_import
 
-import numpy as np
-
-import time
-import sys
-import six
-import marshal
-import types as python_types
 import inspect
+import sys
 
-_GLOBAL_CUSTOM_OBJECTS = {}
+from tensorflow.keras.utils import CustomObjectScope
+from tensorflow.keras.utils import custom_object_scope
+from tensorflow.keras.utils import get_custom_objects
+from tensorflow.keras.utils import serialize_keras_object
+from tensorflow.keras.utils import deserialize_keras_object
+from tensorflow.keras.utils import Progbar
 
 
-class CustomObjectScope(object):
-    """Provides a scope that changes to `_GLOBAL_CUSTOM_OBJECTS` cannot escape.
+def to_list(x, allow_tuple=False):
+    """Normalizes a list/tensor into a list.
 
-    Code within a `with` statement will be able to access custom objects
-    by name. Changes to global custom objects persist
-    within the enclosing `with` statement. At end of the `with` statement,
-    global custom objects are reverted to state
-    at beginning of the `with` statement.
+    If a tensor is passed, we return
+    a list of size 1 containing the tensor.
+
+    # Arguments
+        x: target object to be normalized.
+        allow_tuple: If False and x is a tuple,
+            it will be converted into a list
+            with a single element (the tuple).
+            Else converts the tuple to a list.
+
+    # Returns
+        A list.
+    """
+    if isinstance(x, list):
+        return x
+    if allow_tuple and isinstance(x, tuple):
+        return list(x)
+    return [x]
+
+
+def unpack_singleton(x):
+    """Gets the first element if the iterable has only one value.
+
+    Otherwise return the iterable.
+
+    # Argument
+        x: A list or tuple.
+
+    # Returns
+        The same iterable or the first element.
+    """
+    if len(x) == 1:
+        return x[0]
+    return x
+
+
+def object_list_uid(object_list):
+    object_list = to_list(object_list)
+    return ', '.join((str(abs(id(x))) for x in object_list))
+
+
+def is_all_none(iterable_or_element):
+    iterable = to_list(iterable_or_element, allow_tuple=True)
+    for element in iterable:
+        if element is not None:
+            return False
+    return True
+
+
+def slice_arrays(arrays, start=None, stop=None):
+    """Slices an array or list of arrays.
+
+    This takes an array-like, or a list of
+    array-likes, and outputs:
+        - arrays[start:stop] if `arrays` is an array-like
+        - [x[start:stop] for x in arrays] if `arrays` is a list
+
+    Can also work on list/array of indices: `_slice_arrays(x, indices)`
+
+    # Arguments
+        arrays: Single array or list of arrays.
+        start: can be an integer index (start index)
+            or a list/array of indices
+        stop: integer (stop index); should be None if
+            `start` was a list.
+
+    # Returns
+        A slice of the array(s).
+    """
+    if arrays is None:
+        return [None]
+    elif isinstance(arrays, list):
+        if hasattr(start, '__len__'):
+            # hdf5 datasets only support list objects as indices
+            if hasattr(start, 'shape'):
+                start = start.tolist()
+            return [None if x is None else x[start] for x in arrays]
+        else:
+            return [None if x is None else x[start:stop] for x in arrays]
+    else:
+        if hasattr(start, '__len__'):
+            if hasattr(start, 'shape'):
+                start = start.tolist()
+            return arrays[start]
+        elif hasattr(start, '__getitem__'):
+            return arrays[start:stop]
+        else:
+            return [None]
+
+
+def transpose_shape(shape, target_format, spatial_axes):
+    """Converts a tuple or a list to the correct `data_format`.
+
+    It does so by switching the positions of its elements.
+
+    # Arguments
+        shape: Tuple or list, often representing shape,
+            corresponding to `'channels_last'`.
+        target_format: A string, either `'channels_first'` or `'channels_last'`.
+        spatial_axes: A tuple of integers.
+            Correspond to the indexes of the spatial axes.
+            For example, if you pass a shape
+            representing (batch_size, timesteps, rows, cols, channels),
+            then `spatial_axes=(2, 3)`.
+
+    # Returns
+        A tuple or list, with the elements permuted according
+        to `target_format`.
 
     # Example
-
-    Consider a custom object `MyObject`
-
     ```python
-        with CustomObjectScope({"MyObject":MyObject}):
-            layer = Dense(..., W_regularizer="MyObject")
-            # save, load, etc. will recognize custom object by name
-    ```
-    """
-
-    def __init__(self, *args):
-        self.custom_objects = args
-        self.backup = None
-
-    def __enter__(self):
-        self.backup = _GLOBAL_CUSTOM_OBJECTS.copy()
-        for objects in self.custom_objects:
-            _GLOBAL_CUSTOM_OBJECTS.update(objects)
-        return self
-
-    def __exit__(self, *args, **kwargs):
-        _GLOBAL_CUSTOM_OBJECTS.clear()
-        _GLOBAL_CUSTOM_OBJECTS.update(self.backup)
-
-
-def custom_object_scope(*args):
-    """Provides a scope that changes to `_GLOBAL_CUSTOM_OBJECTS` cannot escape.
-
-    Convenience wrapper for `CustomObjectScope`.
-    Code within a `with` statement will be able to access custom objects
-    by name. Changes to global custom objects persist
-    within the enclosing `with` statement. At end of the `with` statement,
-    global custom objects are reverted to state
-    at beginning of the `with` statement.
-
-    # Example
-
-    Consider a custom object `MyObject`
-
-    ```python
-        with custom_object_scope({"MyObject":MyObject}):
-            layer = Dense(..., W_regularizer="MyObject")
-            # save, load, etc. will recognize custom object by name
+        >>> from keras.utils.generic_utils import transpose_shape
+        >>> transpose_shape((16, 128, 128, 32),'channels_first', spatial_axes=(1, 2))
+        (16, 32, 128, 128)
+        >>> transpose_shape((16, 128, 128, 32), 'channels_last', spatial_axes=(1, 2))
+        (16, 128, 128, 32)
+        >>> transpose_shape((128, 128, 32), 'channels_first', spatial_axes=(0, 1))
+        (32, 128, 128)
     ```
 
-    # Arguments
-        *args: Variable length list of dictionaries of name,
-            class pairs to add to custom objects.
-
-    # Returns
-        Object of type `CustomObjectScope`.
+    # Raises
+        ValueError: if `value` or the global `data_format` invalid.
     """
-    return CustomObjectScope(*args)
+    if target_format == 'channels_first':
+        new_values = shape[:spatial_axes[0]]
+        new_values += (shape[-1],)
+        new_values += tuple(shape[x] for x in spatial_axes)
 
-
-def get_custom_objects():
-    """Retrieves a live reference to the global dictionary of custom objects.
-
-    Updating and clearing custom objects using `custom_object_scope`
-    is preferred, but `get_custom_objects` can
-    be used to directly access `_GLOBAL_CUSTOM_OBJECTS`.
-
-    # Example
-
-    ```python
-        get_custom_objects().clear()
-        get_custom_objects()["MyObject"] = MyObject
-    ```
-
-    # Returns
-        Global dictionary of names to classes (`_GLOBAL_CUSTOM_OBJECTS`).
-    """
-    return _GLOBAL_CUSTOM_OBJECTS
-
-
-def serialize_keras_object(instance):
-    if instance is None:
-        return None
-    if hasattr(instance, 'get_config'):
-        return {
-            'class_name': instance.__class__.__name__,
-            'config': instance.get_config()
-        }
-    if hasattr(instance, '__name__'):
-        return instance.__name__
+        if isinstance(shape, list):
+            return list(new_values)
+        return new_values
+    elif target_format == 'channels_last':
+        return shape
     else:
-        raise ValueError('Cannot serialize', instance)
+        raise ValueError('The `data_format` argument must be one of '
+                         '"channels_first", "channels_last". Received: ' +
+                         str(target_format))
 
 
-def deserialize_keras_object(identifier, module_objects=None,
-                             custom_objects=None,
-                             printable_module_name='object'):
-    if isinstance(identifier, dict):
-        # In this case we are dealing with a Keras config dictionary.
-        config = identifier
-        if 'class_name' not in config or 'config' not in config:
-            raise ValueError('Improper config format: ' + str(config))
-        class_name = config['class_name']
-        if custom_objects and class_name in custom_objects:
-            cls = custom_objects[class_name]
-        elif class_name in _GLOBAL_CUSTOM_OBJECTS:
-            cls = _GLOBAL_CUSTOM_OBJECTS[class_name]
-        else:
-            module_objects = module_objects or {}
-            cls = module_objects.get(class_name)
-            if cls is None:
-                raise ValueError('Unknown ' + printable_module_name +
-                                 ': ' + class_name)
-        if hasattr(cls, 'from_config'):
-            arg_spec = inspect.getargspec(cls.from_config)
-            if 'custom_objects' in arg_spec.args:
-                custom_objects = custom_objects or {}
-                return cls.from_config(config['config'],
-                                       custom_objects=dict(list(_GLOBAL_CUSTOM_OBJECTS.items()) +
-                                                           list(custom_objects.items())))
-            return cls.from_config(config['config'])
-        else:
-            # Then `cls` may be a function returning a class.
-            # in this case by convention `config` holds
-            # the kwargs of the function.
-            return cls(**config['config'])
-    elif isinstance(identifier, six.string_types):
-        function_name = identifier
-        if custom_objects and function_name in custom_objects:
-            fn = custom_objects.get(function_name)
-        elif function_name in _GLOBAL_CUSTOM_OBJECTS:
-            fn = _GLOBAL_CUSTOM_OBJECTS[function_name]
-        else:
-            fn = module_objects.get(function_name)
-            if fn is None:
-                raise ValueError('Unknown ' + printable_module_name,
-                                 ':' + class_name)
-        return fn
-    else:
-        raise ValueError('Could not interpret serialized ' +
-                         printable_module_name + ': ' + identifier)
+def check_for_unexpected_keys(name, input_dict, expected_values):
+    unknown = set(input_dict.keys()).difference(expected_values)
+    if unknown:
+        raise ValueError('Unknown entries in {} dictionary: {}. Only expected '
+                         'following keys: {}'.format(name, list(unknown),
+                                                     expected_values))
 
 
-def make_tuple(*args):
-    return args
-
-
-def func_dump(func):
-    """Serializes a user defined function.
-
+def has_arg(fn, name, accept_all=False):
+    """Checks if a callable accepts a given keyword argument.
+    For Python 2, checks if there is an argument with the given name.
+    For Python 3, checks if there is an argument with the given name, and
+    also whether this argument can be called with a keyword (i.e. if it is
+    not a positional-only argument).
     # Arguments
-        func: the function to serialize.
-
+        fn: Callable to inspect.
+        name: Check if `fn` can be called with `name` as a keyword argument.
+        accept_all: What to return if there is no parameter called `name`
+                    but the function accepts a `**kwargs` argument.
     # Returns
-        A tuple `(code, defaults, closure)`.
+        bool, whether `fn` accepts a `name` keyword argument.
     """
-    code = marshal.dumps(func.__code__).decode('raw_unicode_escape')
-    defaults = func.__defaults__
-    if func.__closure__:
-        closure = tuple(c.cell_contents for c in func.__closure__)
+    if sys.version_info < (3,):
+        arg_spec = inspect.getargspec(fn)
+        if accept_all and arg_spec.keywords is not None:
+            return True
+        return (name in arg_spec.args)
+    elif sys.version_info < (3, 3):
+        arg_spec = inspect.getfullargspec(fn)
+        if accept_all and arg_spec.varkw is not None:
+            return True
+        return (name in arg_spec.args or
+                name in arg_spec.kwonlyargs)
     else:
-        closure = None
-    return code, defaults, closure
-
-
-def func_load(code, defaults=None, closure=None, globs=None):
-    """Deserializes a user defined function.
-
-    # Arguments
-        code: bytecode of the function.
-        defaults: defaults of the function.
-        closure: closure of the function.
-        globs: dictionary of global objects.
-
-    # Returns
-        A function object.
-    """
-    if isinstance(code, (tuple, list)):  # unpack previous dump
-        code, defaults, closure = code
-    code = marshal.loads(code.encode('raw_unicode_escape'))
-    if globs is None:
-        globs = globals()
-    return python_types.FunctionType(code, globs,
-                                     name=code.co_name,
-                                     argdefs=defaults,
-                                     closure=closure)
-
-
-class Progbar(object):
-    """Displays a progress bar.
-
-    # Arguments
-        target: Total number of steps expected.
-        interval: Minimum visual progress update interval (in seconds).
-    """
-
-    def __init__(self, target, width=30, verbose=1, interval=0.05):
-        self.width = width
-        self.target = target
-        self.sum_values = {}
-        self.unique_values = []
-        self.start = time.time()
-        self.last_update = 0
-        self.interval = interval
-        self.total_width = 0
-        self.seen_so_far = 0
-        self.verbose = verbose
-
-    def update(self, current, values=None, force=False):
-        """Updates the progress bar.
-
-        # Arguments
-            current: Index of current step.
-            values: List of tuples (name, value_for_last_step).
-                The progress bar will display averages for these values.
-            force: Whether to force visual progress update.
-        """
-        values = values or []
-        for k, v in values:
-            if k not in self.sum_values:
-                self.sum_values[k] = [v * (current - self.seen_so_far),
-                                      current - self.seen_so_far]
-                self.unique_values.append(k)
-            else:
-                self.sum_values[k][0] += v * (current - self.seen_so_far)
-                self.sum_values[k][1] += (current - self.seen_so_far)
-        self.seen_so_far = current
-
-        now = time.time()
-        if self.verbose == 1:
-            if not force and (now - self.last_update) < self.interval:
-                return
-
-            prev_total_width = self.total_width
-            sys.stdout.write('\b' * prev_total_width)
-            sys.stdout.write('\r')
-
-            numdigits = int(np.floor(np.log10(self.target))) + 1
-            barstr = '%%%dd/%%%dd [' % (numdigits, numdigits)
-            bar = barstr % (current, self.target)
-            prog = float(current) / self.target
-            prog_width = int(self.width * prog)
-            if prog_width > 0:
-                bar += ('=' * (prog_width - 1))
-                if current < self.target:
-                    bar += '>'
-                else:
-                    bar += '='
-            bar += ('.' * (self.width - prog_width))
-            bar += ']'
-            sys.stdout.write(bar)
-            self.total_width = len(bar)
-
-            if current:
-                time_per_unit = (now - self.start) / current
-            else:
-                time_per_unit = 0
-            eta = time_per_unit * (self.target - current)
-            info = ''
-            if current < self.target:
-                info += ' - ETA: %ds' % eta
-            else:
-                info += ' - %ds' % (now - self.start)
-            for k in self.unique_values:
-                info += ' - %s:' % k
-                if isinstance(self.sum_values[k], list):
-                    avg = self.sum_values[k][0] / max(1, self.sum_values[k][1])
-                    if abs(avg) > 1e-3:
-                        info += ' %.4f' % avg
-                    else:
-                        info += ' %.4e' % avg
-                else:
-                    info += ' %s' % self.sum_values[k]
-
-            self.total_width += len(info)
-            if prev_total_width > self.total_width:
-                info += ((prev_total_width - self.total_width) * ' ')
-
-            sys.stdout.write(info)
-            sys.stdout.flush()
-
-            if current >= self.target:
-                sys.stdout.write('\n')
-
-        if self.verbose == 2:
-            if current >= self.target:
-                info = '%ds' % (now - self.start)
-                for k in self.unique_values:
-                    info += ' - %s:' % k
-                    avg = self.sum_values[k][0] / max(1, self.sum_values[k][1])
-                    if avg > 1e-3:
-                        info += ' %.4f' % avg
-                    else:
-                        info += ' %.4e' % avg
-                sys.stdout.write(info + "\n")
-
-        self.last_update = now
-
-    def add(self, n, values=None):
-        self.update(self.seen_so_far + n, values)
+        signature = inspect.signature(fn)
+        parameter = signature.parameters.get(name)
+        if parameter is None:
+            if accept_all:
+                for param in signature.parameters.values():
+                    if param.kind == inspect.Parameter.VAR_KEYWORD:
+                        return True
+            return False
+        return (parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                                   inspect.Parameter.KEYWORD_ONLY))

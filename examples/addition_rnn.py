@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
-'''An implementation of sequence to sequence learning for performing addition
+'''
+# An implementation of sequence to sequence learning for performing addition
+
 Input: "535+61"
 Output: "596"
 Padding is handled by using a repeated sentinel character (space)
 
-Input may optionally be inverted, shown to increase performance in many tasks in:
+Input may optionally be reversed, shown to increase performance in many tasks in:
 "Learning to Execute"
 http://arxiv.org/abs/1410.4615
 and
@@ -12,18 +14,18 @@ and
 http://papers.nips.cc/paper/5346-sequence-to-sequence-learning-with-neural-networks.pdf
 Theoretically it introduces shorter term dependencies between source and target.
 
-Two digits inverted:
+Two digits reversed:
 + One layer LSTM (128 HN), 5k training examples = 99% train/test accuracy in 55 epochs
 
-Three digits inverted:
+Three digits reversed:
 + One layer LSTM (128 HN), 50k training examples = 99% train/test accuracy in 100 epochs
 
-Four digits inverted:
+Four digits reversed:
 + One layer LSTM (128 HN), 400k training examples = 99% train/test accuracy in 20 epochs
 
-Five digits inverted:
+Five digits reversed:
 + One layer LSTM (128 HN), 550k training examples = 99% train/test accuracy in 30 epochs
-'''
+'''  # noqa
 
 from __future__ import print_function
 from keras.models import Sequential
@@ -34,8 +36,8 @@ from six.moves import range
 
 class CharacterTable(object):
     """Given a set of characters:
-    + Encode them to a one hot integer representation
-    + Decode the one hot integer representation to their character output
+    + Encode them to a one-hot integer representation
+    + Decode the one-hot or integer representation to their character output
     + Decode a vector of probabilities to their character output
     """
     def __init__(self, chars):
@@ -49,10 +51,11 @@ class CharacterTable(object):
         self.indices_char = dict((i, c) for i, c in enumerate(self.chars))
 
     def encode(self, C, num_rows):
-        """One hot encode given string C.
+        """One-hot encode given string C.
 
         # Arguments
-            num_rows: Number of rows in the returned one hot encoding. This is
+            C: string, to be encoded.
+            num_rows: Number of rows in the returned one-hot encoding. This is
                 used to keep the # of rows for each data the same.
         """
         x = np.zeros((num_rows, len(self.chars)))
@@ -61,6 +64,14 @@ class CharacterTable(object):
         return x
 
     def decode(self, x, calc_argmax=True):
+        """Decode the given vector or 2D array to their character output.
+
+        # Arguments
+            x: A vector or a 2D array of probabilities or one-hot representations;
+                or a vector of character indices (used with `calc_argmax=False`).
+            calc_argmax: Whether to find the character index with maximum
+                probability, defaults to `True`.
+        """
         if calc_argmax:
             x = x.argmax(axis=-1)
         return ''.join(self.indices_char[x] for x in x)
@@ -74,11 +85,11 @@ class colors:
 # Parameters for the model and dataset.
 TRAINING_SIZE = 50000
 DIGITS = 3
-INVERT = True
+REVERSE = True
 
 # Maximum length of input is 'int + int' (e.g., '345+678'). Maximum length of
 # int is DIGITS.
-MAxLEN = DIGITS + 1 + DIGITS
+MAXLEN = DIGITS + 1 + DIGITS
 
 # All the numbers, plus sign and space for padding.
 chars = '0123456789+ '
@@ -98,13 +109,13 @@ while len(questions) < TRAINING_SIZE:
     if key in seen:
         continue
     seen.add(key)
-    # Pad the data with spaces such that it is always MAxLEN.
+    # Pad the data with spaces such that it is always MAXLEN.
     q = '{}+{}'.format(a, b)
-    query = q + ' ' * (MAxLEN - len(q))
+    query = q + ' ' * (MAXLEN - len(q))
     ans = str(a + b)
     # Answers can be of maximum size DIGITS + 1.
     ans += ' ' * (DIGITS + 1 - len(ans))
-    if INVERT:
+    if REVERSE:
         # Reverse the query, e.g., '12+345  ' becomes '  543+21'. (Note the
         # space used for padding.)
         query = query[::-1]
@@ -113,10 +124,10 @@ while len(questions) < TRAINING_SIZE:
 print('Total addition questions:', len(questions))
 
 print('Vectorization...')
-x = np.zeros((len(questions), MAxLEN, len(chars)), dtype=np.bool)
+x = np.zeros((len(questions), MAXLEN, len(chars)), dtype=np.bool)
 y = np.zeros((len(questions), DIGITS + 1, len(chars)), dtype=np.bool)
 for i, sentence in enumerate(questions):
-    x[i] = ctable.encode(sentence, MAxLEN)
+    x[i] = ctable.encode(sentence, MAXLEN)
 for i, sentence in enumerate(expected):
     y[i] = ctable.encode(sentence, DIGITS + 1)
 
@@ -151,8 +162,8 @@ model = Sequential()
 # "Encode" the input sequence using an RNN, producing an output of HIDDEN_SIZE.
 # Note: In a situation where your input sequences have a variable length,
 # use input_shape=(None, num_feature).
-model.add(RNN(HIDDEN_SIZE, input_shape=(MAxLEN, len(chars))))
-# As the decoder RNN's input, repeatedly provide with the last hidden state of
+model.add(RNN(HIDDEN_SIZE, input_shape=(MAXLEN, len(chars))))
+# As the decoder RNN's input, repeatedly provide with the last output of
 # RNN for each time step. Repeat 'DIGITS + 1' times as that's the maximum
 # length of output, e.g., when DIGITS=3, max output is 999+999=1998.
 model.add(layers.RepeatVector(DIGITS + 1))
@@ -166,8 +177,7 @@ for _ in range(LAYERS):
 
 # Apply a dense layer to the every temporal slice of an input. For each of step
 # of the output sequence, decide which character should be chosen.
-model.add(layers.TimeDistributed(layers.Dense(len(chars))))
-model.add(layers.Activation('softmax'))
+model.add(layers.TimeDistributed(layers.Dense(len(chars), activation='softmax')))
 model.compile(loss='categorical_crossentropy',
               optimizer='adam',
               metrics=['accuracy'])
@@ -179,7 +189,9 @@ for iteration in range(1, 200):
     print()
     print('-' * 50)
     print('Iteration', iteration)
-    model.fit(x_train, y_train, batch_size=BATCH_SIZE, epochs=1,
+    model.fit(x_train, y_train,
+              batch_size=BATCH_SIZE,
+              epochs=1,
               validation_data=(x_val, y_val))
     # Select 10 samples from the validation set at random so we can visualize
     # errors.
@@ -190,11 +202,10 @@ for iteration in range(1, 200):
         q = ctable.decode(rowx[0])
         correct = ctable.decode(rowy[0])
         guess = ctable.decode(preds[0], calc_argmax=False)
-        print('Q', q[::-1] if INVERT else q)
-        print('T', correct)
+        print('Q', q[::-1] if REVERSE else q, end=' ')
+        print('T', correct, end=' ')
         if correct == guess:
-            print(colors.ok + '☑' + colors.close, end=" ")
+            print(colors.ok + '☑' + colors.close, end=' ')
         else:
-            print(colors.fail + '☒' + colors.close, end=" ")
+            print(colors.fail + '☒' + colors.close, end=' ')
         print(guess)
-        print('---')

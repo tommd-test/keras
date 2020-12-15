@@ -7,14 +7,18 @@ build/*
 keras/datasets/data/*
 keras/datasets/temp/*
 docs/site/*
-docs/theme/*
 docs/sources/*
+docs/theme/fonts/*
+docs/theme/img/*
 tags
 Keras.egg-info
+examples/img/*
 
 # test-related
 .coverage
 .cache
+.pytest_cache
 
 # developer environments
 .idea
+.vscode

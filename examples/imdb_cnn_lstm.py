@@ -1,7 +1,7 @@
-'''Train a recurrent convolutional network on the IMDB sentiment
-classification task.
+'''
+#Train a recurrent convolutional network on the IMDB sentiment classification task.
 
-Gets to 0.8498 test accuracy after 2 epochs. 41s/epoch on K520 GPU.
+Gets to 0.8498 test accuracy after 2 epochs. 41 s/epoch on K520 GPU.
 '''
 from __future__ import print_function
 
@@ -67,7 +67,9 @@ model.compile(loss='binary_crossentropy',
               metrics=['accuracy'])
 
 print('Train...')
-model.fit(x_train, y_train, batch_size=batch_size, epochs=epochs,
+model.fit(x_train, y_train,
+          batch_size=batch_size,
+          epochs=epochs,
           validation_data=(x_test, y_test))
 score, acc = model.evaluate(x_test, y_test, batch_size=batch_size)
 print('Test score:', score)

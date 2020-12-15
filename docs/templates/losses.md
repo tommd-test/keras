@@ -20,7 +20,7 @@ You can either pass the name of an existing loss function, or pass a TensorFlow/
 
 The actual optimized objective is the mean of the output array across all datapoints.
 
-For a few examples of such functions, check out the [losses source](https://github.com/fchollet/keras/blob/master/keras/losses.py).
+For a few examples of such functions, check out the [losses source](https://github.com/keras-team/keras/blob/master/keras/losses.py).
 
 ## Available loss functions
 
@@ -28,10 +28,15 @@ For a few examples of such functions, check out the [losses source](https://gith
 
 ----
 
-**Note**: when using the `categorical_crossentropy` loss, your targets should be in categorical format (e.g. if you have 10 classes, the target for each sample should be a 10-dimensional vector that is all-zeros expect for a 1 at the index corresponding to the class of the sample). In order to convert *integer targets* into *categorical targets*, you can use the Keras utility `to_categorical`:
+**Note**: when using the `categorical_crossentropy` loss, your targets should be in categorical format (e.g. if you have 10 classes, the target for each sample should be a 10-dimensional vector that is all-zeros except for a 1 at the index corresponding to the class of the sample). In order to convert *integer targets* into *categorical targets*, you can use the Keras utility `to_categorical`:
 
 ```python
-from keras.utils.np_utils import to_categorical
+from keras.utils import to_categorical
 
 categorical_labels = to_categorical(int_labels, num_classes=None)
 ```
+
+When using the `sparse_categorical_crossentropy` loss, your targets should be *integer targets*.
+If you have categorical targets, you should use `categorical_crossentropy`.
+
+`categorical_crossentropy` is another term for [multi-class log loss](http://wiki.fast.ai/index.php/Log_Loss). 
